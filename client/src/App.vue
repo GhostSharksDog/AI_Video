@@ -63,6 +63,12 @@ let pollingTimer: ReturnType<typeof setInterval> | null = null
 let pollingCount = 0
 
 const isAnyUploading = computed(() => uploading.value || urlUploading.value)
+const currentDisplayName = computed(() => currentUser.value?.nickname || currentUser.value?.username || '游客')
+const totalMediaCount = computed(() => mediaList.value.length)
+const completedMediaCount = computed(
+  () => mediaList.value.filter((item) => (item.status || '').toUpperCase() === 'COMPLETED').length,
+)
+const selectedStatusText = computed(() => selectedMedia.value?.status || '未选择')
 
 const selectedMedia = computed(() => {
   if (selectedMediaId.value == null) return null
@@ -560,116 +566,201 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="page">
+    <div class="ambient ambient-one"></div>
+    <div class="ambient ambient-two"></div>
+
     <header class="topbar">
-      <div class="brand">AIVideo</div>
-      <div class="user-area">
-        <button v-if="!currentUser" class="ghost-btn" @click="openAuthModal('login')">登录 / 注册</button>
-        <template v-else>
-          <span class="nickname">{{ currentUser.nickname || currentUser.username }}</span>
-          <button class="ghost-btn" @click="logout">退出</button>
-        </template>
+      <div class="topbar-shell">
+        <div class="brand-block">
+          <div class="brand-mark">AI</div>
+          <div class="brand-copy">
+            <div class="brand">AIVideo</div>
+            <div class="brand-sub">Cinematic analysis console for upload, transcript and long-form summary</div>
+          </div>
+        </div>
+
+        <div class="topbar-actions">
+          <div class="status-chip" :class="{ live: pendingTask || isAnyUploading }">
+            <span class="status-dot"></span>
+            <span>{{ pendingTask ? '任务处理中' : isAnyUploading ? '上传进行中' : '系统就绪' }}</span>
+          </div>
+
+          <div class="user-panel">
+            <div class="user-badge">{{ currentDisplayName.slice(0, 1).toUpperCase() }}</div>
+            <div class="user-copy">
+              <span class="user-label">{{ currentDisplayName }}</span>
+              <span class="user-sub">{{ currentUser ? '已登录工作台' : '登录后保存个人视频记录' }}</span>
+            </div>
+            <button v-if="!currentUser" class="ghost-btn" @click="openAuthModal('login')">登录 / 注册</button>
+            <button v-else class="ghost-btn" @click="logout">退出</button>
+          </div>
+        </div>
       </div>
     </header>
 
     <main class="main">
-      <section
-        class="upload-zone"
-        :class="{ dragging: isDragOver, busy: isAnyUploading }"
-        @click="openFilePicker"
-        @dragover.prevent="isDragOver = true"
-        @dragleave.prevent="isDragOver = false"
-        @drop="handleDrop"
-      >
-        <input ref="fileInputRef" type="file" accept="video/*" hidden @change="onFileChange" />
-        <h2>{{ isAnyUploading ? '上传中...' : '拖拽视频到此处，或点击选择文件' }}</h2>
-        <p>{{ isAnyUploading ? '请稍候，正在写入服务器' : '支持常见视频格式，如 mp4 / mov / mkv 等' }}</p>
-      </section>
-
-      <section class="url-upload-block">
-        <div class="section-head">
-          <h3>链接上传</h3>
-        </div>
-        <div class="url-row">
-          <input
-            v-model.trim="videoUrl"
-            class="url-input"
-            type="text"
-            placeholder="粘贴视频链接（B站 / YouTube / 抖音 等）"
-            :disabled="isAnyUploading"
-            @keyup.enter="uploadByUrl"
-          />
-          <button class="action-btn secondary" :disabled="isAnyUploading" @click="uploadByUrl">
-            {{ urlUploading ? '上传中...' : '链接上传' }}
-          </button>
-        </div>
-      </section>
-
-      <section class="list-block">
-        <div class="section-head">
-          <h3>已上传视频</h3>
-          <button class="ghost-btn" @click="fetchMediaList(false)">{{ loadingList ? '刷新中...' : '刷新列表' }}</button>
+      <section class="hero-panel">
+        <div class="hero-copy">
+          <span class="hero-kicker">Video Intelligence Workbench</span>
+          <h1 class="hero-title">把上传、转写、总结和下载，整合成一个更像产品的控制台。</h1>
+          <p class="hero-text">
+            这里保留你现在全部功能，但视觉上更像一套正在运行的影视分析平台。拖拽文件、贴链接、选任务、看结果，都在同一个工作流里完成。
+          </p>
         </div>
 
-        <div v-if="mediaList.length === 0" class="empty">暂无视频，先上传一个试试。</div>
-
-        <div v-else class="video-grid">
-          <div
-            v-for="item in mediaList"
-            :key="item.id"
-            class="video-card"
-            :class="{ active: selectedMediaId === item.id }"
-            @click="selectMedia(item)"
-            @keydown.enter="selectMedia(item)"
-            tabindex="0"
-            role="button"
-          >
-            <button
-              class="card-delete-btn"
-              :disabled="deletingId === item.id"
-              @click.stop="deleteMedia(item)"
-            >
-              {{ deletingId === item.id ? '删除中' : '删除' }}
-            </button>
-            <div class="video-name">{{ item.filename }}</div>
-            <div class="video-meta">状态：{{ item.status || 'UNKNOWN' }}</div>
-            <div class="video-meta">上传：{{ formatTime(item.uploadTime) }}</div>
+        <div class="hero-stats">
+          <div class="stat-card">
+            <span class="stat-label">全部视频</span>
+            <strong class="stat-value">{{ totalMediaCount }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">已完成</span>
+            <strong class="stat-value">{{ completedMediaCount }}</strong>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">当前状态</span>
+            <strong class="stat-value compact">{{ selectedStatusText }}</strong>
           </div>
         </div>
       </section>
 
-      <section v-if="selectedMedia" class="action-block">
-        <div class="section-head">
-          <h3>当前选择：{{ selectedMedia.filename }}</h3>
+      <section class="upload-board">
+        <div
+          class="upload-zone"
+          :class="{ dragging: isDragOver, busy: isAnyUploading }"
+          @click="openFilePicker"
+          @dragover.prevent="isDragOver = true"
+          @dragleave.prevent="isDragOver = false"
+          @drop="handleDrop"
+        >
+          <input ref="fileInputRef" type="file" accept="video/*" hidden @change="onFileChange" />
+          <div class="upload-icon">
+            <svg viewBox="0 0 64 64" aria-hidden="true">
+              <path d="M32 10v28" />
+              <path d="M21 22 32 10l11 12" />
+              <path d="M14 38v8a8 8 0 0 0 8 8h20a8 8 0 0 0 8-8v-8" />
+            </svg>
+          </div>
+          <h2>{{ isAnyUploading ? '素材正在注入工作台' : '拖拽视频到这里，或者点击打开本地文件' }}</h2>
+          <p>{{ isAnyUploading ? '服务器正在接收并建立媒体记录' : '大面积上传入口保留，支持本地视频直传' }}</p>
         </div>
 
-        <div class="action-row">
-          <button class="action-btn secondary" :disabled="actionLoading !== ''" @click="downloadAudio">
-            {{ actionLoading === 'download' ? '下载中...' : '下载音频' }}
-          </button>
-          <button class="action-btn" :disabled="actionLoading !== ''" @click="runTranscribe">
-            {{ actionLoading === 'transcribe' ? '提取中...' : '提取文字' }}
-          </button>
-          <button class="action-btn primary" :disabled="actionLoading !== ''" @click="runSummary">
-            {{ actionLoading === 'summary' ? '总结中...' : '全文总结' }}
-          </button>
-        </div>
-
-        <div class="view-row">
-          <button class="tiny-btn" @click="openResult('transcript')">显示文字结果</button>
-          <button class="tiny-btn" @click="openResult('summary')">显示总结结果</button>
-          <button class="tiny-btn" @click="hideResult">隐藏展示</button>
-        </div>
-
-        <div v-if="pendingTask" class="task-tip">
-          任务进行中：{{ pendingTask.type === 'transcribe' ? '文字提取' : '全文总结' }}（每 3 秒自动刷新）
+        <div class="url-upload-block">
+          <div class="section-head">
+            <h3>链接采集</h3>
+            <span class="section-tag">URL Ingest</span>
+          </div>
+          <p class="panel-note">适合把 B站、YouTube 等链接直接送进同一个媒体池。</p>
+          <div class="url-row">
+            <input
+              v-model.trim="videoUrl"
+              class="url-input"
+              type="text"
+              placeholder="粘贴视频链接（B站 / YouTube / 抖音 等）"
+              :disabled="isAnyUploading"
+              @keyup.enter="uploadByUrl"
+            />
+            <button class="action-btn secondary" :disabled="isAnyUploading" @click="uploadByUrl">
+              {{ urlUploading ? '上传中...' : '链接上传' }}
+            </button>
+          </div>
         </div>
       </section>
 
-      <section v-if="showResultPanel" class="result-block">
-        <div class="section-head">
-          <h3>{{ resultType === 'transcript' ? '文字提取结果' : '全文总结结果' }}</h3>
-        </div>
-        <pre class="result-content">{{ resultContent }}</pre>
+      <section class="workspace-grid">
+        <section class="list-block">
+          <div class="section-head">
+            <div>
+              <h3>媒体陈列</h3>
+              <p class="section-desc">选中任意一条视频后，右侧工作区会切换到对应操作。</p>
+            </div>
+            <button class="ghost-btn dark" @click="fetchMediaList(false)">{{ loadingList ? '刷新中...' : '刷新列表' }}</button>
+          </div>
+
+          <div v-if="mediaList.length === 0" class="empty">
+            <strong>这里还没有素材</strong>
+            <span>先上传一个视频，我们再继续提取文字或生成全文总结。</span>
+          </div>
+
+          <div v-else class="video-grid">
+            <div
+              v-for="item in mediaList"
+              :key="item.id"
+              class="video-card"
+              :class="{ active: selectedMediaId === item.id }"
+              @click="selectMedia(item)"
+              @keydown.enter="selectMedia(item)"
+              tabindex="0"
+              role="button"
+            >
+              <button
+                class="card-delete-btn"
+                :disabled="deletingId === item.id"
+                @click.stop="deleteMedia(item)"
+              >
+                {{ deletingId === item.id ? '删除中' : '删除' }}
+              </button>
+              <div class="video-card-top">
+                <span class="video-pill">{{ item.status || 'UNKNOWN' }}</span>
+                <span class="video-id">#{{ item.id }}</span>
+              </div>
+              <div class="video-name">{{ item.filename }}</div>
+              <div class="video-meta">上传时间：{{ formatTime(item.uploadTime) }}</div>
+              <div class="video-meta">结果状态：{{ item.aiSummary ? '有总结' : item.transcriptText ? '有文字' : '待处理' }}</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="control-column">
+          <section v-if="selectedMedia" class="action-block">
+            <div class="section-head">
+              <div>
+                <h3>操作面板</h3>
+                <p class="section-desc">{{ selectedMedia.filename }}</p>
+              </div>
+              <span class="section-tag accent">{{ selectedStatusText }}</span>
+            </div>
+
+            <div class="action-row">
+              <button class="action-btn secondary" :disabled="actionLoading !== ''" @click="downloadAudio">
+                {{ actionLoading === 'download' ? '下载中...' : '下载音频' }}
+              </button>
+              <button class="action-btn cobalt" :disabled="actionLoading !== ''" @click="runTranscribe">
+                {{ actionLoading === 'transcribe' ? '提取中...' : '提取文字' }}
+              </button>
+              <button class="action-btn primary" :disabled="actionLoading !== ''" @click="runSummary">
+                {{ actionLoading === 'summary' ? '总结中...' : '全文总结' }}
+              </button>
+            </div>
+
+            <div class="view-row">
+              <button class="tiny-btn" @click="openResult('transcript')">显示文字结果</button>
+              <button class="tiny-btn" @click="openResult('summary')">显示总结结果</button>
+              <button class="tiny-btn" @click="hideResult">隐藏展示</button>
+            </div>
+
+            <div v-if="pendingTask" class="task-tip">
+              任务进行中：{{ pendingTask.type === 'transcribe' ? '文字提取' : '全文总结' }}（每 3 秒自动刷新）
+            </div>
+          </section>
+
+          <section v-else class="placeholder-block">
+            <span class="section-tag">No media selected</span>
+            <h3>先从左侧选一个视频</h3>
+            <p>选中之后，这里会出现下载音频、提取文字和全文总结三个操作按钮。</p>
+          </section>
+
+          <section v-if="showResultPanel" class="result-block">
+            <div class="section-head">
+              <div>
+                <h3>{{ resultType === 'transcript' ? '文字提取结果' : '全文总结结果' }}</h3>
+                <p class="section-desc">{{ selectedMedia?.filename || '当前结果展示面板' }}</p>
+              </div>
+              <span class="section-tag">{{ resultType === 'transcript' ? 'Transcript' : 'Summary' }}</span>
+            </div>
+            <pre class="result-content">{{ resultContent }}</pre>
+          </section>
+        </section>
       </section>
     </main>
 
@@ -680,7 +771,10 @@ onBeforeUnmount(() => {
     <div v-if="showAuthModal" class="auth-backdrop" @click.self="closeAuthModal">
       <div class="auth-panel">
         <div class="auth-head">
-          <h3>{{ authMode === 'login' ? '用户登录' : '用户注册' }}</h3>
+          <div>
+            <h3>{{ authMode === 'login' ? '用户登录' : '用户注册' }}</h3>
+            <p class="auth-head-sub">进入你的私人视频工作台</p>
+          </div>
           <button class="close-btn" @click="closeAuthModal">×</button>
         </div>
         <div class="auth-body">
@@ -711,26 +805,135 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Space+Grotesk:wght@500;700&display=swap');
+
 .page {
   min-height: 100vh;
-  background: #f4f6fb;
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at top left, rgba(65, 145, 255, 0.16), transparent 30%),
+    radial-gradient(circle at 82% 10%, rgba(255, 137, 88, 0.16), transparent 24%),
+    linear-gradient(180deg, #07111f 0%, #0d1627 50%, #eef3f7 50.1%, #edf2f6 100%);
   color: #17202a;
+  font-family: 'Manrope', 'Segoe UI', sans-serif;
+}
+
+.ambient {
+  position: absolute;
+  inset: auto;
+  pointer-events: none;
+  filter: blur(40px);
+  opacity: 0.6;
+}
+
+.ambient-one {
+  top: 110px;
+  right: -80px;
+  width: 300px;
+  height: 300px;
+  border-radius: 50%;
+  background: rgba(53, 139, 255, 0.24);
+}
+
+.ambient-two {
+  top: 320px;
+  left: -60px;
+  width: 260px;
+  height: 260px;
+  border-radius: 50%;
+  background: rgba(255, 141, 87, 0.18);
 }
 
 .topbar {
-  height: 68px;
-  background: #111827;
-  color: #fff;
-  padding: 0 24px;
+  position: relative;
+  z-index: 2;
+  padding: 20px 24px 0;
+}
+
+.topbar-shell {
+  max-width: 1240px;
+  margin: 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 20px;
+  padding: 18px 22px;
+  border: 1px solid rgba(194, 216, 243, 0.14);
+  border-radius: 24px;
+  background: rgba(8, 17, 32, 0.72);
+  backdrop-filter: blur(18px);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.22);
+}
+
+.brand-block {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.brand-mark {
+  width: 54px;
+  height: 54px;
+  display: grid;
+  place-items: center;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #5ca3ff 0%, #79e1d2 100%);
+  color: #07111f;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+.brand-copy {
+  display: grid;
+  gap: 4px;
 }
 
 .brand {
-  font-size: 28px;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 30px;
   font-weight: 700;
-  letter-spacing: 0.5px;
+  color: #f7fafc;
+  letter-spacing: 0.02em;
+}
+
+.brand-sub {
+  font-size: 13px;
+  color: rgba(226, 232, 240, 0.72);
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.status-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 42px;
+  padding: 0 16px;
+  border: 1px solid rgba(124, 151, 189, 0.24);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #d7e3f4;
+  font-size: 13px;
+}
+
+.status-chip.live {
+  border-color: rgba(122, 226, 194, 0.4);
+  box-shadow: 0 0 0 1px rgba(122, 226, 194, 0.08);
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #7ae2c2;
+  box-shadow: 0 0 18px rgba(122, 226, 194, 0.8);
 }
 
 .user-area {
@@ -739,62 +942,223 @@ onBeforeUnmount(() => {
   gap: 12px;
 }
 
-.nickname {
+.user-panel {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.user-badge {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(255, 173, 120, 0.22), rgba(106, 171, 255, 0.28));
+  color: #fff;
+  font-weight: 800;
+}
+
+.user-copy {
+  display: grid;
+}
+
+.user-label {
+  color: #fff;
   font-size: 14px;
-  opacity: 0.95;
+  font-weight: 700;
+}
+
+.user-sub {
+  color: rgba(226, 232, 240, 0.66);
+  font-size: 12px;
 }
 
 .main {
-  max-width: 1100px;
+  position: relative;
+  z-index: 1;
+  max-width: 1240px;
   margin: 0 auto;
-  padding: 28px 18px 40px;
+  padding: 22px 18px 48px;
   display: grid;
+  gap: 24px;
+}
+
+.hero-panel {
+  display: grid;
+  grid-template-columns: 1.4fr 0.9fr;
+  gap: 20px;
+  padding: 18px 6px 6px;
+}
+
+.hero-copy {
+  padding: 18px 4px;
+}
+
+.hero-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: rgba(122, 226, 194, 0.12);
+  color: #8cebd0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.hero-title {
+  margin-top: 18px;
+  max-width: 720px;
+  color: #f8fbff;
+  font-size: clamp(34px, 5vw, 58px);
+  line-height: 1.04;
+  letter-spacing: -0.04em;
+  font-weight: 800;
+}
+
+.hero-text {
+  margin-top: 18px;
+  max-width: 680px;
+  color: rgba(229, 238, 247, 0.76);
+  font-size: 16px;
+  line-height: 1.75;
+}
+
+.hero-stats {
+  display: grid;
+  gap: 14px;
+  align-content: end;
+}
+
+.stat-card {
+  padding: 18px 20px;
+  border-radius: 20px;
+  background: rgba(9, 17, 32, 0.74);
+  border: 1px solid rgba(172, 198, 229, 0.14);
+  box-shadow: 0 18px 40px rgba(6, 10, 17, 0.18);
+}
+
+.stat-label {
+  display: block;
+  color: rgba(215, 227, 244, 0.74);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+}
+
+.stat-value {
+  display: block;
+  margin-top: 8px;
+  color: #fff;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 36px;
+  font-weight: 700;
+}
+
+.stat-value.compact {
+  font-size: 24px;
+  line-height: 1.3;
+}
+
+.upload-board {
+  display: grid;
+  grid-template-columns: 1.25fr 0.75fr;
   gap: 20px;
 }
 
 .upload-zone {
-  min-height: 290px;
-  border: 2px dashed #8ea0b8;
-  border-radius: 18px;
-  background: linear-gradient(145deg, #ffffff 0%, #eef4ff 100%);
-  display: grid;
-  place-items: center;
+  min-height: 320px;
+  border: 1px dashed rgba(123, 169, 232, 0.5);
+  border-radius: 30px;
+  background:
+    radial-gradient(circle at top right, rgba(95, 164, 255, 0.18), transparent 28%),
+    linear-gradient(145deg, rgba(12, 24, 46, 0.96) 0%, rgba(15, 34, 56, 0.9) 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   text-align: center;
   cursor: pointer;
-  transition: all 0.25s ease;
-  padding: 20px;
+  transition: transform 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+  padding: 28px;
+  color: #f7fbff;
+  box-shadow: 0 30px 60px rgba(6, 18, 37, 0.16);
+}
+
+.upload-icon {
+  width: 82px;
+  height: 82px;
+  margin-bottom: 18px;
+  border-radius: 24px;
+  background: linear-gradient(135deg, rgba(92, 163, 255, 0.18), rgba(125, 235, 210, 0.18));
+  display: grid;
+  place-items: center;
+}
+
+.upload-icon svg {
+  width: 42px;
+  height: 42px;
+  fill: none;
+  stroke: #90c8ff;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .upload-zone h2 {
   margin: 0;
-  font-size: 32px;
-  color: #1c3d68;
+  max-width: 560px;
+  font-size: 34px;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  font-weight: 800;
 }
 
 .upload-zone p {
-  margin-top: 12px;
-  color: #50627a;
+  margin-top: 14px;
+  max-width: 520px;
+  color: rgba(223, 234, 246, 0.72);
+  font-size: 15px;
 }
 
 .upload-zone.dragging {
-  border-color: #1e90ff;
-  transform: translateY(-2px);
-  box-shadow: 0 14px 30px rgba(30, 144, 255, 0.2);
+  border-color: #79b7ff;
+  transform: translateY(-4px);
+  box-shadow: 0 28px 46px rgba(66, 144, 255, 0.22);
 }
 
 .upload-zone.busy {
   pointer-events: none;
-  opacity: 0.75;
+  opacity: 0.88;
 }
 
 .list-block,
 .url-upload-block,
 .action-block,
-.result-block {
-  background: #fff;
-  border-radius: 14px;
-  border: 1px solid #d9e2ef;
-  padding: 18px;
+.result-block,
+.placeholder-block {
+  background: rgba(255, 255, 255, 0.82);
+  border-radius: 28px;
+  border: 1px solid rgba(199, 214, 233, 0.88);
+  padding: 22px;
+  box-shadow: 0 24px 70px rgba(31, 51, 76, 0.08);
+  backdrop-filter: blur(12px);
+}
+
+.url-upload-block {
+  align-self: stretch;
+  background:
+    radial-gradient(circle at top left, rgba(255, 158, 94, 0.16), transparent 24%),
+    rgba(255, 255, 255, 0.85);
+}
+
+.panel-note {
+  color: #5d6c7d;
+  font-size: 14px;
+  line-height: 1.6;
+  margin-bottom: 14px;
 }
 
 .url-row {
@@ -804,75 +1168,149 @@ onBeforeUnmount(() => {
 }
 
 .url-input {
-  height: 40px;
-  border-radius: 8px;
-  border: 1px solid #cdd8ea;
-  padding: 0 12px;
+  height: 52px;
+  border-radius: 16px;
+  border: 1px solid #cfdae7;
+  padding: 0 16px;
   font-size: 14px;
   outline: none;
+  background: rgba(250, 252, 255, 0.92);
 }
 
 .url-input:focus {
-  border-color: #2f76d2;
-  box-shadow: 0 0 0 3px rgba(47, 118, 210, 0.12);
+  border-color: #4186dd;
+  box-shadow: 0 0 0 4px rgba(65, 134, 221, 0.12);
 }
 
 .section-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 12px;
+  gap: 14px;
+  margin-bottom: 14px;
 }
 
 .section-head h3 {
   margin: 0;
-  font-size: 18px;
+  font-size: 21px;
+  font-weight: 800;
+  color: #12263f;
+}
+
+.section-desc {
+  margin-top: 6px;
+  color: #607288;
+  font-size: 13px;
+}
+
+.section-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: #edf4fb;
+  color: #40628b;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.section-tag.accent {
+  background: rgba(15, 157, 122, 0.12);
+  color: #11725c;
+}
+
+.workspace-grid {
+  display: grid;
+  grid-template-columns: 1.08fr 0.92fr;
+  gap: 20px;
+  align-items: start;
+}
+
+.control-column {
+  display: grid;
+  gap: 20px;
 }
 
 .video-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
 }
 
 .video-card {
   position: relative;
-  border: 1px solid #d2deed;
-  border-radius: 10px;
-  background: #fafcff;
+  min-height: 156px;
+  border: 1px solid #d8e3f0;
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, rgba(245, 249, 255, 0.98) 100%);
   text-align: left;
-  padding: 12px;
+  padding: 16px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: transform 0.24s ease, border-color 0.24s ease, box-shadow 0.24s ease;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
 }
 
 .video-card:hover {
-  border-color: #5d9df0;
-  transform: translateY(-1px);
+  border-color: #6da7f3;
+  transform: translateY(-2px);
+  box-shadow: 0 14px 30px rgba(79, 126, 179, 0.12);
 }
 
 .video-card.active {
-  border-color: #1e66d0;
-  background: #eef5ff;
-  box-shadow: inset 0 0 0 1px #1e66d0;
+  border-color: #2f76d2;
+  background: linear-gradient(180deg, #f7fbff 0%, #edf5ff 100%);
+  box-shadow: 0 18px 34px rgba(47, 118, 210, 0.18);
+}
+
+.video-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.video-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #eef3fa;
+  color: #58708b;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.video-id {
+  color: #8aa0bb;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 12px;
 }
 
 .card-delete-btn {
   position: absolute;
-  right: 10px;
-  top: 10px;
-  height: 26px;
-  border: 1px solid #f2b8b8;
-  background: #fff;
+  right: 14px;
+  top: 14px;
+  height: 28px;
+  border: 1px solid #f5c8c3;
+  background: rgba(255, 255, 255, 0.92);
   color: #b42318;
-  border-radius: 6px;
-  padding: 0 8px;
+  border-radius: 999px;
+  padding: 0 10px;
   font-size: 12px;
+  font-weight: 700;
   cursor: pointer;
 }
 
 .card-delete-btn:hover:enabled {
-  background: #fff0f0;
+  background: #fff4f2;
 }
 
 .card-delete-btn:disabled {
@@ -881,45 +1319,57 @@ onBeforeUnmount(() => {
 }
 
 .video-name {
-  font-size: 15px;
-  font-weight: 600;
+  font-size: 17px;
+  font-weight: 800;
   color: #12263f;
-  margin-bottom: 8px;
-  padding-right: 64px;
+  margin-bottom: 10px;
+  padding-right: 72px;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  white-space: normal;
 }
 
 .video-meta {
   font-size: 13px;
   color: #5f738f;
-  margin-top: 2px;
+  margin-top: 4px;
 }
 
 .action-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 12px;
 }
 
 .action-btn {
-  min-width: 116px;
-  height: 40px;
+  min-width: 126px;
+  height: 46px;
   border: none;
-  border-radius: 8px;
-  background: #2f76d2;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #3477da 0%, #5ba7ff 100%);
   color: #fff;
   cursor: pointer;
   font-size: 14px;
+  font-weight: 700;
+  box-shadow: 0 12px 24px rgba(52, 119, 218, 0.24);
 }
 
 .action-btn.primary {
-  background: #0f9d7a;
+  background: linear-gradient(135deg, #139d7b 0%, #39cfb0 100%);
+  box-shadow: 0 12px 24px rgba(19, 157, 123, 0.24);
 }
 
 .action-btn.secondary {
-  background: #2f3d4f;
+  background: linear-gradient(135deg, #202f45 0%, #314966 100%);
+  box-shadow: 0 12px 24px rgba(32, 47, 69, 0.22);
+}
+
+.action-btn.cobalt {
+  background: linear-gradient(135deg, #5d56ff 0%, #2d7dff 100%);
+  box-shadow: 0 12px 24px rgba(72, 102, 255, 0.22);
 }
 
 .action-btn:disabled {
@@ -928,53 +1378,92 @@ onBeforeUnmount(() => {
 }
 
 .view-row {
-  margin-top: 12px;
+  margin-top: 14px;
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
 }
 
 .tiny-btn {
-  height: 34px;
-  border: 1px solid #c5d5ea;
-  border-radius: 7px;
-  background: #fff;
-  color: #2d4f77;
-  padding: 0 12px;
+  height: 38px;
+  border: 1px solid #cfdbeb;
+  border-radius: 12px;
+  background: #f8fbff;
+  color: #27486f;
+  padding: 0 14px;
   cursor: pointer;
+  font-weight: 700;
 }
 
 .task-tip {
-  margin-top: 12px;
+  margin-top: 16px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(19, 157, 123, 0.12), rgba(57, 207, 176, 0.08));
+  border: 1px solid rgba(19, 157, 123, 0.18);
   font-size: 13px;
-  color: #267167;
+  color: #145e4d;
 }
 
 .result-content {
   margin: 0;
   white-space: pre-wrap;
   line-height: 1.65;
-  max-height: 320px;
+  max-height: 420px;
   overflow-y: auto;
-  background: #0f172a;
-  color: #e2e8f0;
-  border-radius: 8px;
-  padding: 12px;
+  background: linear-gradient(180deg, #091321 0%, #101c2f 100%);
+  color: #dce6f2;
+  border-radius: 18px;
+  padding: 18px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .empty {
+  display: grid;
+  gap: 8px;
   color: #687d99;
-  padding: 16px 4px;
+  padding: 24px 6px;
+}
+
+.empty strong {
+  font-size: 18px;
+  color: #153456;
 }
 
 .ghost-btn {
-  height: 34px;
-  border-radius: 7px;
+  height: 40px;
+  border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.35);
   background: transparent;
   color: inherit;
-  padding: 0 12px;
+  padding: 0 14px;
   cursor: pointer;
+  font-weight: 700;
+}
+
+.ghost-btn.dark {
+  color: #1f436d;
+  border-color: #d1deed;
+  background: #f7fbff;
+}
+
+.placeholder-block {
+  min-height: 210px;
+  display: grid;
+  align-content: center;
+  gap: 10px;
+}
+
+.placeholder-block h3 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 800;
+  color: #152c47;
+}
+
+.placeholder-block p {
+  color: #61748b;
+  line-height: 1.7;
 }
 
 .auth-backdrop {
@@ -983,35 +1472,47 @@ onBeforeUnmount(() => {
   z-index: 40;
   display: grid;
   place-items: center;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(3, 9, 20, 0.7);
+  backdrop-filter: blur(10px);
   padding: 16px;
 }
 
 .auth-panel {
   width: min(92vw, 420px);
-  background: #fff;
-  border-radius: 12px;
+  background: linear-gradient(180deg, #fdfefe 0%, #eef4fa 100%);
+  border-radius: 24px;
   overflow: hidden;
+  box-shadow: 0 30px 60px rgba(3, 9, 20, 0.28);
 }
 
 .auth-head {
-  height: 56px;
-  background: #1f2937;
+  min-height: 82px;
+  background: linear-gradient(135deg, #081120 0%, #172843 100%);
   color: #fff;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 14px;
+  padding: 16px 18px;
 }
 
 .auth-head h3 {
   margin: 0;
-  font-size: 18px;
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.auth-head-sub {
+  margin-top: 4px;
+  color: rgba(220, 231, 244, 0.72);
+  font-size: 13px;
 }
 
 .close-btn {
   border: none;
-  background: transparent;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
   color: #fff;
   font-size: 24px;
   cursor: pointer;
@@ -1019,25 +1520,27 @@ onBeforeUnmount(() => {
 
 .auth-body {
   display: grid;
-  gap: 10px;
-  padding: 16px;
+  gap: 12px;
+  padding: 20px;
 }
 
 .auth-body input {
-  height: 40px;
-  border-radius: 8px;
-  border: 1px solid #d3deec;
-  padding: 0 10px;
+  height: 48px;
+  border-radius: 14px;
+  border: 1px solid #d7e1ec;
+  padding: 0 14px;
   outline: none;
+  background: rgba(255, 255, 255, 0.88);
 }
 
 .auth-submit {
-  height: 40px;
-  border-radius: 8px;
+  height: 48px;
+  border-radius: 14px;
   border: none;
-  background: #1f7ae0;
+  background: linear-gradient(135deg, #1d78df 0%, #60a9ff 100%);
   color: #fff;
   cursor: pointer;
+  font-weight: 800;
 }
 
 .auth-submit:disabled {
@@ -1048,8 +1551,8 @@ onBeforeUnmount(() => {
   border: none;
   background: transparent;
   color: #3268aa;
-  text-decoration: underline;
   cursor: pointer;
+  font-weight: 700;
 }
 
 .auth-msg {
@@ -1067,19 +1570,21 @@ onBeforeUnmount(() => {
   left: 50%;
   bottom: 22px;
   transform: translateX(-50%);
-  padding: 10px 14px;
-  border-radius: 8px;
+  padding: 12px 16px;
+  border-radius: 14px;
   color: #fff;
   z-index: 50;
   font-size: 14px;
+  font-weight: 700;
+  box-shadow: 0 14px 34px rgba(3, 9, 20, 0.24);
 }
 
 .banner.ok {
-  background: #15803d;
+  background: linear-gradient(135deg, #16814a 0%, #1ea466 100%);
 }
 
 .banner.error {
-  background: #b91c1c;
+  background: linear-gradient(135deg, #b42318 0%, #d94738 100%);
 }
 
 .fade-enter-active,
@@ -1093,8 +1598,34 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 720px) {
+  .topbar {
+    padding: 14px 14px 0;
+  }
+
+  .topbar-shell,
+  .hero-panel,
+  .upload-board,
+  .workspace-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar-shell {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .topbar-actions {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .user-panel {
+    width: 100%;
+  }
+
   .upload-zone {
-    min-height: 220px;
+    min-height: 240px;
   }
 
   .upload-zone h2 {
@@ -1103,6 +1634,12 @@ onBeforeUnmount(() => {
 
   .url-row {
     grid-template-columns: 1fr;
+  }
+
+  .brand-sub,
+  .user-sub,
+  .hero-text {
+    font-size: 14px;
   }
 }
 </style>
