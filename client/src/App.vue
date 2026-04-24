@@ -602,10 +602,7 @@ onBeforeUnmount(() => {
       <section class="hero-panel">
         <div class="hero-copy">
           <span class="hero-kicker">Video Intelligence Workbench</span>
-          <h1 class="hero-title">把上传、转写、总结和下载，整合成一个更像产品的控制台。</h1>
-          <p class="hero-text">
-            这里保留你现在全部功能，但视觉上更像一套正在运行的影视分析平台。拖拽文件、贴链接、选任务、看结果，都在同一个工作流里完成。
-          </p>
+          <h1 class="hero-title">一个集上传、转写、总结和下载一体的控制台。</h1>
         </div>
 
         <div class="hero-stats">
@@ -1435,14 +1432,14 @@ onBeforeUnmount(() => {
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.35);
   background: transparent;
-  color: inherit;
+  color: #ffffff;
   padding: 0 14px;
   cursor: pointer;
   font-weight: 700;
 }
 
 .ghost-btn.dark {
-  color: #1f436d;
+  color: #ffffff;
   border-color: #d1deed;
   background: #f7fbff;
 }
