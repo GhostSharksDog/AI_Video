@@ -43,7 +43,10 @@ const authForm = ref({
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const isDragOver = ref(false)
 const uploading = ref(false)
+const urlUploading = ref(false)
+const videoUrl = ref('')
 const loadingList = ref(false)
+const deletingId = ref<number | null>(null)
 const actionLoading = ref<'' | 'download' | 'transcribe' | 'summary'>('')
 const banner = ref('')
 const bannerType = ref<'ok' | 'error'>('ok')
@@ -57,6 +60,9 @@ const resultContent = ref('')
 
 const pendingTask = ref<{ id: number; type: PendingTaskType } | null>(null)
 let pollingTimer: ReturnType<typeof setInterval> | null = null
+let pollingCount = 0
+
+const isAnyUploading = computed(() => uploading.value || urlUploading.value)
 
 const selectedMedia = computed(() => {
   if (selectedMediaId.value == null) return null
@@ -278,6 +284,43 @@ async function uploadFile(file: File) {
   }
 }
 
+async function uploadByUrl() {
+  if (!currentUser.value?.id) {
+    openAuthModal('login')
+    showBanner('请先登录后上传', 'error')
+    return
+  }
+
+  const url = videoUrl.value.trim()
+  if (!url) {
+    showBanner('请先输入视频链接', 'error')
+    return
+  }
+  if (!/^https?:\/\//i.test(url)) {
+    showBanner('请输入合法的 http/https 链接', 'error')
+    return
+  }
+
+  urlUploading.value = true
+  try {
+    const formData = new FormData()
+    formData.append('url', url)
+    formData.append('userId', String(currentUser.value.id))
+    await request.post('/media/upload-url', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    })
+    videoUrl.value = ''
+    await fetchMediaList(true)
+    showBanner('链接上传成功')
+  } catch (error: any) {
+    showBanner(error?.response?.data || error?.message || '链接上传失败', 'error')
+  } finally {
+    urlUploading.value = false
+  }
+}
+
 function handleDrop(event: DragEvent) {
   event.preventDefault()
   isDragOver.value = false
@@ -289,6 +332,47 @@ function handleDrop(event: DragEvent) {
 
 function selectMedia(item: MediaItem) {
   selectedMediaId.value = item.id
+}
+
+async function deleteMedia(item: MediaItem) {
+  if (!currentUser.value?.id) {
+    openAuthModal('login')
+    showBanner('请先登录后操作', 'error')
+    return
+  }
+
+  const ok = window.confirm(`确认删除 "${item.filename}" 吗？`)
+  if (!ok) return
+
+  deletingId.value = item.id
+  try {
+    await request.delete('/media/delete', {
+      params: {
+        id: item.id,
+        userId: currentUser.value.id,
+      },
+    })
+
+    if (pendingTask.value?.id === item.id) {
+      stopPolling()
+    }
+
+    if (selectedMediaId.value === item.id) {
+      showResultPanel.value = false
+      selectedMediaId.value = null
+    }
+
+    await fetchMediaList(false)
+    showBanner('删除成功')
+  } catch (error: any) {
+    const message =
+      error?.response?.data ||
+      error?.message ||
+      '删除失败'
+    showBanner(String(message), 'error')
+  } finally {
+    deletingId.value = null
+  }
 }
 
 function formatTime(time?: string) {
@@ -356,7 +440,7 @@ async function runSummary() {
   if (!selectedMedia.value) return
 
   const summary = selectedMedia.value.aiSummary?.trim()
-  if (summary && !summary.includes('等待调度') && !summary.includes('正在')) {
+  if (summary && !isSummaryPendingText(summary)) {
     openResult('summary')
     return
   }
@@ -366,13 +450,30 @@ async function runSummary() {
     const resp = await request.get<any, string>('/mission/ai', {
       params: { id: selectedMedia.value.id },
     })
-    showBanner(resp || '已提交全文总结任务')
+    const message = resp || '已提交全文总结任务'
+    const isHardError = message.includes('失败') || message.includes('文件不存在') || message.includes('系统繁忙')
+    if (isHardError) {
+      showBanner(message, 'error')
+      return
+    }
+    showBanner(message)
     startPolling(selectedMedia.value.id, 'summary')
   } catch (error: any) {
     showBanner(error?.message || '全文总结失败', 'error')
   } finally {
     actionLoading.value = ''
   }
+}
+
+function isSummaryPendingText(raw?: string | null) {
+  const text = raw?.trim()
+  if (!text) return true
+  return (
+    text.startsWith('[MQ]') ||
+    text.includes('等待调度') ||
+    text.includes('任务提交中') ||
+    text.includes('任务已在后台运行')
+  )
 }
 
 function openResult(type: 'transcript' | 'summary') {
@@ -397,13 +498,16 @@ function stopPolling() {
     pollingTimer = null
   }
   pendingTask.value = null
+  pollingCount = 0
 }
 
 function startPolling(id: number, type: PendingTaskType) {
   stopPolling()
   pendingTask.value = { id, type }
+  pollingCount = 0
 
   pollingTimer = setInterval(async () => {
+    pollingCount += 1
     await fetchMediaList(false)
 
     const target = mediaList.value.find((item) => item.id === id)
@@ -421,14 +525,26 @@ function startPolling(id: number, type: PendingTaskType) {
     }
 
     const summary = target.aiSummary?.trim()
-    if (!summary) return
+    if (!summary) {
+      if (pollingCount >= 120) {
+        stopPolling()
+        showBanner('总结任务超时，请稍后手动刷新', 'error')
+      }
+      return
+    }
 
-    const done = !summary.includes('等待调度') && !summary.includes('正在')
+    const done = !isSummaryPendingText(summary)
     if (done) {
       stopPolling()
       selectedMediaId.value = id
       openResult('summary')
       showBanner(summary.includes('失败') ? '总结任务结束（包含错误）' : '全文总结完成')
+      return
+    }
+
+    if (pollingCount >= 120) {
+      stopPolling()
+      showBanner('总结任务超时，请稍后手动刷新', 'error')
     }
   }, 3000)
 }
@@ -458,15 +574,34 @@ onBeforeUnmount(() => {
     <main class="main">
       <section
         class="upload-zone"
-        :class="{ dragging: isDragOver, busy: uploading }"
+        :class="{ dragging: isDragOver, busy: isAnyUploading }"
         @click="openFilePicker"
         @dragover.prevent="isDragOver = true"
         @dragleave.prevent="isDragOver = false"
         @drop="handleDrop"
       >
         <input ref="fileInputRef" type="file" accept="video/*" hidden @change="onFileChange" />
-        <h2>{{ uploading ? '上传中...' : '拖拽视频到此处，或点击选择文件' }}</h2>
-        <p>{{ uploading ? '请稍候，正在写入服务器' : '支持常见视频格式，如 mp4 / mov / mkv 等' }}</p>
+        <h2>{{ isAnyUploading ? '上传中...' : '拖拽视频到此处，或点击选择文件' }}</h2>
+        <p>{{ isAnyUploading ? '请稍候，正在写入服务器' : '支持常见视频格式，如 mp4 / mov / mkv 等' }}</p>
+      </section>
+
+      <section class="url-upload-block">
+        <div class="section-head">
+          <h3>链接上传</h3>
+        </div>
+        <div class="url-row">
+          <input
+            v-model.trim="videoUrl"
+            class="url-input"
+            type="text"
+            placeholder="粘贴视频链接（B站 / YouTube / 抖音 等）"
+            :disabled="isAnyUploading"
+            @keyup.enter="uploadByUrl"
+          />
+          <button class="action-btn secondary" :disabled="isAnyUploading" @click="uploadByUrl">
+            {{ urlUploading ? '上传中...' : '链接上传' }}
+          </button>
+        </div>
       </section>
 
       <section class="list-block">
@@ -478,17 +613,27 @@ onBeforeUnmount(() => {
         <div v-if="mediaList.length === 0" class="empty">暂无视频，先上传一个试试。</div>
 
         <div v-else class="video-grid">
-          <button
+          <div
             v-for="item in mediaList"
             :key="item.id"
             class="video-card"
             :class="{ active: selectedMediaId === item.id }"
             @click="selectMedia(item)"
+            @keydown.enter="selectMedia(item)"
+            tabindex="0"
+            role="button"
           >
+            <button
+              class="card-delete-btn"
+              :disabled="deletingId === item.id"
+              @click.stop="deleteMedia(item)"
+            >
+              {{ deletingId === item.id ? '删除中' : '删除' }}
+            </button>
             <div class="video-name">{{ item.filename }}</div>
             <div class="video-meta">状态：{{ item.status || 'UNKNOWN' }}</div>
             <div class="video-meta">上传：{{ formatTime(item.uploadTime) }}</div>
-          </button>
+          </div>
         </div>
       </section>
 
@@ -643,12 +788,33 @@ onBeforeUnmount(() => {
 }
 
 .list-block,
+.url-upload-block,
 .action-block,
 .result-block {
   background: #fff;
   border-radius: 14px;
   border: 1px solid #d9e2ef;
   padding: 18px;
+}
+
+.url-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+}
+
+.url-input {
+  height: 40px;
+  border-radius: 8px;
+  border: 1px solid #cdd8ea;
+  padding: 0 12px;
+  font-size: 14px;
+  outline: none;
+}
+
+.url-input:focus {
+  border-color: #2f76d2;
+  box-shadow: 0 0 0 3px rgba(47, 118, 210, 0.12);
 }
 
 .section-head {
@@ -670,6 +836,7 @@ onBeforeUnmount(() => {
 }
 
 .video-card {
+  position: relative;
   border: 1px solid #d2deed;
   border-radius: 10px;
   background: #fafcff;
@@ -690,11 +857,35 @@ onBeforeUnmount(() => {
   box-shadow: inset 0 0 0 1px #1e66d0;
 }
 
+.card-delete-btn {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  height: 26px;
+  border: 1px solid #f2b8b8;
+  background: #fff;
+  color: #b42318;
+  border-radius: 6px;
+  padding: 0 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.card-delete-btn:hover:enabled {
+  background: #fff0f0;
+}
+
+.card-delete-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .video-name {
   font-size: 15px;
   font-weight: 600;
   color: #12263f;
   margin-bottom: 8px;
+  padding-right: 64px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -908,6 +1099,10 @@ onBeforeUnmount(() => {
 
   .upload-zone h2 {
     font-size: 24px;
+  }
+
+  .url-row {
+    grid-template-columns: 1fr;
   }
 }
 </style>
